@@ -29,14 +29,18 @@ jest.mock("@react-navigation/native", () => ({
   useIsFocused: () => mockIsFocused,
 }))
 
+const mockUseHardwareBackGuard = jest.fn()
+jest.mock("@app/screens/account-migration/hooks/use-hardware-back-guard", () => ({
+  useHardwareBackGuard: (onBack?: () => void) => mockUseHardwareBackGuard(onBack),
+}))
+
+const mockRegisterDismissal = jest.fn()
 const mockEnforcement = {
-  tier: TwoFactorTier.Nudge as TwoFactorTier,
+  unmetTier: TwoFactorTier.Nudge as TwoFactorTier,
   hasTwoFactor: false,
   missingMethod: TwoFactorMethod.Email as TwoFactorMethod,
   unverifiedEmail: null as string | null,
-  shouldShowNudgeCard: true,
-  shouldShowSettingsBanner: true,
-  dismissNudgeCard: jest.fn(),
+  registerDismissal: mockRegisterDismissal,
 }
 jest.mock("@app/custodial/providers/two-factor-enforcement", () => ({
   useTwoFactorEnforcement: () => mockEnforcement,
@@ -77,7 +81,7 @@ describe("TwoFactorSetupScreen", () => {
     jest.clearAllMocks()
     loadLocale("en")
     mockIsFocused = true
-    mockEnforcement.tier = TwoFactorTier.Nudge
+    mockEnforcement.unmetTier = TwoFactorTier.Nudge
     mockEnforcement.hasTwoFactor = false
     mockEnforcement.missingMethod = TwoFactorMethod.Email
     mockEnforcement.unverifiedEmail = null
@@ -122,7 +126,7 @@ describe("TwoFactorSetupScreen", () => {
 
   it("offers to add a phone number when the email is already verified", async () => {
     mockEnforcement.missingMethod = TwoFactorMethod.Phone
-    mockEnforcement.tier = TwoFactorTier.Required
+    mockEnforcement.unmetTier = TwoFactorTier.Required
     await renderScreen()
 
     expect(screen.queryByText(LL.TwoFactorEnforcement.addEmail())).toBeNull()
@@ -147,12 +151,25 @@ describe("TwoFactorSetupScreen", () => {
     })
   })
 
-  it("installs a close control that leaves the screen", async () => {
+  it("installs a close control that charges the exit to the tier it opened for", async () => {
+    mockEnforcement.unmetTier = TwoFactorTier.Required
     await renderScreen()
 
     renderInstalledCloseControl()
     fireEvent.press(screen.getByTestId("icon-close"))
 
+    expect(mockRegisterDismissal).toHaveBeenCalledWith(TwoFactorTier.Required)
+    expect(mockGoBack).toHaveBeenCalledTimes(1)
+  })
+
+  it("treats the hardware back as the close control", async () => {
+    mockEnforcement.unmetTier = TwoFactorTier.Required
+    await renderScreen()
+
+    const onBack = mockUseHardwareBackGuard.mock.calls.at(-1)?.[0]
+    onBack()
+
+    expect(mockRegisterDismissal).toHaveBeenCalledWith(TwoFactorTier.Required)
     expect(mockGoBack).toHaveBeenCalledTimes(1)
   })
 
@@ -168,6 +185,7 @@ describe("TwoFactorSetupScreen", () => {
     await flushEffects()
 
     expect(mockGoBack).toHaveBeenCalledTimes(1)
+    expect(mockRegisterDismissal).not.toHaveBeenCalled()
   })
 
   it("stays put while another screen is on top, even with two factors", async () => {

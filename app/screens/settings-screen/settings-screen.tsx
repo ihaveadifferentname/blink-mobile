@@ -113,8 +113,10 @@ export const SettingsScreen: React.FC = () => {
   const isSelfCustodialMode = activeAccount?.type === AccountType.SelfCustodial
   const shouldShowSettingsBanner =
     isSelfCustodialMode && backupState.status !== BackupStatus.Completed
-  const { shouldShowSettingsBanner: shouldShowTwoFactorBanner, tier: twoFactorTier } =
-    useTwoFactorEnforcement()
+  const {
+    shouldShowSettingsBanner: shouldShowTwoFactorBanner,
+    unmetTier: twoFactorTier,
+  } = useTwoFactorEnforcement()
   const { isAnonMode } = useSelfCustodialAccountMode()
   const { promptEnhancedMode } = useEnhancedModePrompt()
   const { isRestrictedRegion, presentRestrictedRegionModal } = useRestrictedRegion()
