@@ -215,7 +215,6 @@ export type RootStackParamList = {
   totpRegistrationValidate: { totpRegistrationId: string }
   totpLoginValidate: { authToken: string }
   twoFactorSetup: undefined
-  twoFactorProtectionRequired: undefined
   twoFactorNonCustodial: undefined
   webView: {
     url: string

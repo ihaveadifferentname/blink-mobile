@@ -177,7 +177,7 @@ describe("TwoFactorEnforcementProvider", () => {
       expect(result.current.shouldShowSettingsBanner).toBe(false)
     })
 
-    it("shows nothing until the account's record has loaded", () => {
+    it("shows nothing until the account's record has loaded, and holds the home meanwhile", () => {
       mockGetItem.mockReturnValue(new Promise(() => {}))
 
       const { result } = renderHook(() => useTwoFactorEnforcement(), { wrapper })
@@ -185,6 +185,14 @@ describe("TwoFactorEnforcementProvider", () => {
       expect(result.current.unmetTier).toBe(TwoFactorTier.None)
       expect(result.current.shouldShowNudgeCard).toBe(false)
       expect(result.current.isSessionStartPending).toBe(false)
+      expect(result.current.isProtectionGateActive).toBe(false)
+      expect(result.current.isPreparingSessionStart).toBe(true)
+    })
+
+    it("holds the home only while the record is being read, not once it is in", async () => {
+      const { result } = await renderEnforcement()
+
+      expect(result.current.isPreparingSessionStart).toBe(false)
     })
 
     it("ignores a self-custodial account even when the query still answers", async () => {
@@ -212,13 +220,14 @@ describe("TwoFactorEnforcementProvider", () => {
       expect(mockGetItem).not.toHaveBeenCalled()
     })
 
-    it("shows nothing without an account", async () => {
+    it("shows nothing without an account, and does not hold the home for one", async () => {
       setNoAccount()
 
       const { result } = await renderEnforcement()
 
       expect(result.current.tier).toBe(TwoFactorTier.None)
       expect(result.current.shouldShowNudgeCard).toBe(false)
+      expect(result.current.isPreparingSessionStart).toBe(false)
       expect(mockGetItem).not.toHaveBeenCalled()
     })
   })
@@ -511,8 +520,17 @@ describe("TwoFactorEnforcementProvider", () => {
       expect(result.current.requiredPrompt).toBe(TwoFactorSessionPrompt.RequiredModal)
     })
 
-    it("waits for the network read of the account before it is pending", async () => {
+    it("is pending from the local read alone when it already owes a prompt, before the fresh read lands", async () => {
       setAccount({ sats: 500_000, loading: true })
+
+      const { result } = await renderEnforcement()
+
+      expect(result.current.isSessionStartPending).toBe(true)
+      expect(result.current.requiredPrompt).toBe(TwoFactorSessionPrompt.RequiredModal)
+    })
+
+    it("waits for the fresh read while the local read owes nothing, since that read can still raise the tier", async () => {
+      setAccount({ sats: 0, loading: true })
       const { result, rerender } = await renderEnforcement()
       expect(result.current.isSessionStartPending).toBe(false)
 
@@ -520,6 +538,56 @@ describe("TwoFactorEnforcementProvider", () => {
       rerender({})
 
       expect(result.current.isSessionStartPending).toBe(true)
+      expect(result.current.requiredPrompt).toBe(TwoFactorSessionPrompt.RequiredModal)
+    })
+
+    it("stands the protection screen in for the home while the start that owes it is pending", async () => {
+      setAccount({ sats: 500_000 })
+      storeRecord({ highestTier: TwoFactorTier.Required, requiredDismissals: 3 })
+
+      const { result } = await renderEnforcement()
+      expect(result.current.isProtectionGateActive).toBe(true)
+
+      act(() => result.current.consumeSessionStart())
+
+      expect(result.current.isProtectionGateActive).toBe(false)
+    })
+
+    it("keeps the protection screen down for a prompt that is only the modal", async () => {
+      setAccount({ sats: 500_000 })
+
+      const { result } = await renderEnforcement()
+
+      expect(result.current.isSessionStartPending).toBe(true)
+      expect(result.current.isProtectionGateActive).toBe(false)
+    })
+
+    it("lets the home in once the gate's dismissal takes the start, with the dismissal charged", async () => {
+      setAccount({ sats: 5_000_000, phone: PHONE, email: verifiedEmail })
+      const { result } = await renderEnforcement()
+      expect(result.current.isProtectionGateActive).toBe(true)
+
+      act(() => {
+        result.current.registerDismissal(TwoFactorTier.Authenticator)
+        result.current.consumeSessionStart()
+      })
+
+      expect(result.current.isProtectionGateActive).toBe(false)
+      expect(result.current.remainingDismissals).toBe(2)
+    })
+
+    it("keeps the protection screen down for a tier crossed after the start was taken", async () => {
+      setAccount({ sats: 500_000, phone: PHONE, email: verifiedEmail })
+      const { result, rerender } = await renderEnforcement()
+      act(() => result.current.consumeSessionStart())
+
+      setAccount({ sats: 5_000_000, phone: PHONE, email: verifiedEmail })
+      await act(async () => rerender({}))
+
+      expect(result.current.requiredPrompt).toBe(
+        TwoFactorSessionPrompt.ProtectionRequired,
+      )
+      expect(result.current.isProtectionGateActive).toBe(false)
     })
 
     it("is pending even when nothing is owed, so the session can be taken", async () => {
